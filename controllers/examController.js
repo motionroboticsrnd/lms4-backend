@@ -1,0 +1,272 @@
+import prisma from "../lib/prisma.js";
+
+const fmtExam = (e) => ({ ...e, _id: e.id });
+const fmtQ    = (q) => ({ ...q, _id: q.id });
+
+/* ─── SuperAdmin ─── */
+export const getExams = async (req, res) => {
+  const { level } = req.query;
+  const where = level ? { roboticsLevel: Number(level) } : {};
+  const exams = await prisma.exam.findMany({
+    where,
+    include: { _count: { select: { questions: true, attempts: true } } },
+    orderBy: { roboticsLevel: "asc" },
+  });
+  res.json(exams.map((e) => ({ ...fmtExam(e), questionCount: e._count.questions, attemptCount: e._count.attempts })));
+};
+
+export const createExam = async (req, res) => {
+  const { title, roboticsLevel, totalMarks, passingMarks, durationMins } = req.body;
+  if (!title || !roboticsLevel || !totalMarks || !passingMarks || !durationMins)
+    return res.status(400).json({ message: "All fields are required." });
+  const exam = await prisma.exam.create({
+    data: { title, roboticsLevel: Number(roboticsLevel), totalMarks: Number(totalMarks), passingMarks: Number(passingMarks), durationMins: Number(durationMins) },
+  });
+  res.status(201).json(fmtExam(exam));
+};
+
+export const updateExam = async (req, res) => {
+  const { title, roboticsLevel, totalMarks, passingMarks, durationMins, isActive } = req.body;
+  try {
+    const exam = await prisma.exam.update({
+      where: { id: req.params.id },
+      data: { title, roboticsLevel: Number(roboticsLevel), totalMarks: Number(totalMarks), passingMarks: Number(passingMarks), durationMins: Number(durationMins), isActive },
+    });
+    res.json(fmtExam(exam));
+  } catch { res.status(404).json({ message: "Exam not found." }); }
+};
+
+export const deleteExam = async (req, res) => {
+  await prisma.exam.delete({ where: { id: req.params.id } });
+  res.json({ message: "Deleted." });
+};
+
+/* ─── Questions ─── */
+export const getQuestions = async (req, res) => {
+  const questions = await prisma.examQuestion.findMany({
+    where: { examId: req.params.id },
+    orderBy: { createdAt: "asc" },
+  });
+  res.json(questions.map(fmtQ));
+};
+
+export const createQuestion = async (req, res) => {
+  const { question, options, correctAnswer, marks, imageUrl, equation } = req.body;
+  if (!question || !options || options.length < 2 || correctAnswer === undefined)
+    return res.status(400).json({ message: "question, options (min 2) and correctAnswer required." });
+  const q = await prisma.examQuestion.create({
+    data: {
+      examId: req.params.id, question, options,
+      correctAnswer: Number(correctAnswer), marks: Number(marks) || 1,
+      imageUrl: imageUrl || "", equation: equation || "",
+    },
+  });
+  res.status(201).json(fmtQ(q));
+};
+
+export const updateQuestion = async (req, res) => {
+  const { question, options, correctAnswer, marks, imageUrl, equation } = req.body;
+  try {
+    const q = await prisma.examQuestion.update({
+      where: { id: req.params.qid },
+      data: { question, options, correctAnswer: Number(correctAnswer), marks: Number(marks), imageUrl: imageUrl || "", equation: equation || "" },
+    });
+    res.json(fmtQ(q));
+  } catch { res.status(404).json({ message: "Question not found." }); }
+};
+
+export const deleteQuestion = async (req, res) => {
+  await prisma.examQuestion.delete({ where: { id: req.params.qid } });
+  res.json({ message: "Deleted." });
+};
+
+export const bulkCreateQuestions = async (req, res) => {
+  const rows = req.body;
+  if (!Array.isArray(rows) || rows.length === 0)
+    return res.status(400).json({ message: "Send an array of questions." });
+
+  const results = { created: 0, skipped: 0, errors: [] };
+  for (const row of rows) {
+    const opts = [row.optionA, row.optionB, row.optionC, row.optionD].filter(Boolean);
+    if (!row.question || opts.length < 2) {
+      results.skipped++;
+      results.errors.push(`Skipped: missing question or fewer than 2 options — "${row.question || "(blank)"}"`);
+      continue;
+    }
+    const correctIdx = Number(row.correct ?? 0);
+    try {
+      await prisma.examQuestion.create({
+        data: {
+          examId: req.params.id, question: row.question, options: opts,
+          correctAnswer: correctIdx, marks: Number(row.marks) || 1,
+          imageUrl: row.imageUrl || "", equation: row.equation || "",
+        },
+      });
+      results.created++;
+    } catch (err) {
+      results.skipped++;
+      results.errors.push(`"${row.question}": ${err.message}`);
+    }
+  }
+  res.status(201).json(results);
+};
+
+/* ─── Teacher ─── */
+export const getTeacherExams = async (req, res) => {
+  const teacherId = req.user.id;
+
+  const classTeachers = await prisma.classTeacher.findMany({
+    where: { userId: teacherId },
+    include: {
+      class: {
+        include: { examUnlocks: { include: { exam: true } } },
+      },
+    },
+  });
+
+  const levels  = [...new Set(classTeachers.map((ct) => ct.class.roboticsLevel))];
+  const exams   = await prisma.exam.findMany({
+    where: { roboticsLevel: { in: levels }, isActive: true },
+    include: { _count: { select: { questions: true } } },
+    orderBy: { roboticsLevel: "asc" },
+  });
+
+  const classes = classTeachers.map((ct) => ({
+    _id:             ct.class.id,
+    id:              ct.class.id,
+    name:            ct.class.name,
+    roboticsLevel:   ct.class.roboticsLevel,
+    unlockedExamIds: ct.class.examUnlocks.map((u) => u.examId),
+  }));
+
+  res.json({
+    exams: exams.map((e) => ({ ...fmtExam(e), questionCount: e._count.questions })),
+    classes,
+  });
+};
+
+export const unlockExam = async (req, res) => {
+  const { examId, classId } = req.body;
+  await prisma.classExamUnlock.upsert({
+    where: { classId_examId: { classId, examId } },
+    create: { classId, examId, unlockedById: req.user.id },
+    update: {},
+  });
+  res.json({ message: "Exam unlocked for class." });
+};
+
+export const lockExam = async (req, res) => {
+  await prisma.classExamUnlock.deleteMany({
+    where: { examId: req.params.examId, classId: req.params.classId },
+  });
+  res.json({ message: "Exam locked." });
+};
+
+export const getExamResults = async (req, res) => {
+  const attempts = await prisma.examAttempt.findMany({
+    where: { examId: req.params.examId },
+    include: {
+      student: { select: { id: true, fullName: true, email: true, rollNumber: true, avatarColor: true } },
+    },
+    orderBy: { completedAt: "desc" },
+  });
+  res.json(attempts.map((a) => ({ ...a, _id: a.id, student: { ...a.student, _id: a.student.id } })));
+};
+
+/* ─── Student ─── */
+export const getStudentExams = async (req, res) => {
+  const studentId = req.user.id;
+
+  const enrollments = await prisma.studentEnrollment.findMany({
+    where: { studentId },
+    include: {
+      class: {
+        include: { examUnlocks: { include: { exam: { include: { _count: { select: { questions: true } } } } } } },
+      },
+    },
+  });
+
+  const seen  = new Set();
+  const exams = [];
+  for (const en of enrollments) {
+    for (const unlock of en.class.examUnlocks) {
+      if (!seen.has(unlock.examId)) {
+        seen.add(unlock.examId);
+        exams.push({ ...unlock.exam, _id: unlock.exam.id, questionCount: unlock.exam._count.questions });
+      }
+    }
+  }
+
+  const attempts = await prisma.examAttempt.findMany({
+    where: { studentId, examId: { in: exams.map((e) => e.id) } },
+    orderBy: { score: "desc" },
+  });
+  const bestMap = {};
+  for (const a of attempts) {
+    if (!bestMap[a.examId]) bestMap[a.examId] = a;
+  }
+
+  res.json(exams.map((e) => ({ ...e, bestAttempt: bestMap[e.id] ? { ...bestMap[e.id], _id: bestMap[e.id].id } : null })));
+};
+
+export const getStudentExamQuestions = async (req, res) => {
+  const { examId }  = req.params;
+  const studentId   = req.user.id;
+
+  const enrollment = await prisma.studentEnrollment.findFirst({
+    where: { studentId, class: { examUnlocks: { some: { examId } } } },
+  });
+  if (!enrollment) return res.status(403).json({ message: "Exam not unlocked for your class." });
+
+  const exam      = await prisma.exam.findUnique({ where: { id: examId } });
+  const questions = await prisma.examQuestion.findMany({
+    where: { examId },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, question: true, options: true, marks: true },
+  });
+  res.json({ exam: fmtExam(exam), questions: questions.map((q) => ({ ...q, _id: q.id })) });
+};
+
+export const submitExamAttempt = async (req, res) => {
+  const { examId }  = req.params;
+  const { answers } = req.body;
+  const studentId   = req.user.id;
+
+  const enrollment = await prisma.studentEnrollment.findFirst({
+    where: { studentId, class: { examUnlocks: { some: { examId } } } },
+  });
+  if (!enrollment) return res.status(403).json({ message: "Exam not unlocked for your class." });
+
+  const exam      = await prisma.exam.findUnique({ where: { id: examId } });
+  const questions = await prisma.examQuestion.findMany({ where: { examId } });
+
+  let score = 0;
+  for (const q of questions) {
+    if (answers[q.id] !== undefined && Number(answers[q.id]) === q.correctAnswer) {
+      score += q.marks;
+    }
+  }
+
+  const passed  = score >= exam.passingMarks;
+  const attempt = await prisma.examAttempt.create({
+    data: { examId, studentId, score, totalMarks: exam.totalMarks, passed, answers },
+  });
+
+  if (passed) {
+    await prisma.certificate.upsert({
+      where: { studentId_examId: { studentId, examId } },
+      create: { studentId, examId, examTitle: exam.title, roboticsLevel: exam.roboticsLevel, score, totalMarks: exam.totalMarks },
+      update: { score, totalMarks: exam.totalMarks, issuedAt: new Date() },
+    });
+  }
+
+  res.json({ ...attempt, _id: attempt.id, score, totalMarks: exam.totalMarks, passed });
+};
+
+export const getStudentAttempts = async (req, res) => {
+  const attempts = await prisma.examAttempt.findMany({
+    where: { examId: req.params.examId, studentId: req.user.id },
+    orderBy: { completedAt: "desc" },
+  });
+  res.json(attempts.map((a) => ({ ...a, _id: a.id })));
+};

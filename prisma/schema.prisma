@@ -1,0 +1,274 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  superadmin
+  admin
+  teacher
+  student
+}
+
+enum ContentType {
+  book
+  video
+  worksheet
+}
+
+model Institute {
+  id            String    @id @default(uuid())
+  name          String
+  code          String    @unique
+  address       String    @default("")
+  phone         String    @default("")
+  email         String    @default("")
+  allowedLevels Int[]
+  accessUntil   DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  users       User[]
+  classes     Class[]
+  enrollments StudentEnrollment[]
+  notices     Notice[]
+}
+
+model User {
+  id          String   @id @default(uuid())
+  fullName    String
+  email       String   @unique
+  password    String
+  role        Role
+  instituteId String?
+  phone       String   @default("")
+  rollNumber  String   @default("")
+  avatarColor String   @default("#6366f1")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  institute     Institute?             @relation(fields: [instituteId], references: [id])
+  classTeachers ClassTeacher[]
+  enrollments   StudentEnrollment[]
+  examAttempts  ExamAttempt[]
+  certificates  Certificate[]
+  expSubmissions ExperimentSubmission[]
+  notices       Notice[]
+}
+
+model Class {
+  id            String   @id @default(uuid())
+  name          String
+  roboticsLevel Int
+  instituteId   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  institute   Institute          @relation(fields: [instituteId], references: [id])
+  teachers    ClassTeacher[]
+  enrollments StudentEnrollment[]
+  examUnlocks ClassExamUnlock[]
+  expUnlocks  ExperimentUnlock[]
+  expSubmissions ExperimentSubmission[]
+  notices     Notice[]
+}
+
+model ClassTeacher {
+  classId String
+  userId  String
+
+  class Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([classId, userId])
+}
+
+model StudentEnrollment {
+  id          String   @id @default(uuid())
+  studentId   String
+  classId     String
+  instituteId String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  student   User      @relation(fields: [studentId], references: [id])
+  class     Class     @relation(fields: [classId], references: [id])
+  institute Institute @relation(fields: [instituteId], references: [id])
+
+  @@unique([studentId, classId])
+}
+
+model Content {
+  id            String      @id @default(uuid())
+  title         String
+  description   String      @default("")
+  type          ContentType
+  url           String
+  roboticsLevel Int
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model Exam {
+  id            String   @id @default(uuid())
+  title         String
+  roboticsLevel Int
+  totalMarks    Int
+  passingMarks  Int
+  durationMins  Int
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  questions    ExamQuestion[]
+  unlocks      ClassExamUnlock[]
+  attempts     ExamAttempt[]
+  certificates Certificate[]
+}
+
+model ExamQuestion {
+  id            String   @id @default(uuid())
+  examId        String
+  question      String
+  options       String[]
+  correctAnswer Int
+  marks         Int      @default(1)
+  imageUrl      String   @default("")
+  equation      String   @default("")
+  createdAt     DateTime @default(now())
+
+  exam Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+}
+
+model ClassExamUnlock {
+  id          String   @id @default(uuid())
+  classId     String
+  examId      String
+  unlockedById String
+  unlockedAt  DateTime @default(now())
+
+  class  Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+  exam   Exam  @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, examId])
+}
+
+model ExamAttempt {
+  id          String   @id @default(uuid())
+  examId      String
+  studentId   String
+  score       Int
+  totalMarks  Int
+  passed      Boolean
+  answers     Json
+  completedAt DateTime @default(now())
+
+  exam    Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
+}
+
+model Certificate {
+  id            String   @id @default(uuid())
+  studentId     String
+  examId        String
+  examTitle     String
+  roboticsLevel Int
+  score         Int
+  totalMarks    Int
+  issuedAt      DateTime @default(now())
+
+  student User @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  exam    Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, examId])
+}
+
+model Experiment {
+  id            String   @id @default(uuid())
+  expNumber     Int      @default(0)
+  title         String
+  description   String   @default("")
+  objectives    String   @default("")
+  roboticsLevel Int
+  category      String   @default("Practical")
+  duration      Int      @default(30)
+  videoUrl      String   @default("")
+  url           String   @default("")
+  components    Json     @default("[]")
+  steps         Json     @default("[]")
+  diagrams      Json     @default("[]")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  unlocks     ExperimentUnlock[]
+  submissions ExperimentSubmission[]
+}
+
+model ExperimentUnlock {
+  id           String   @id @default(uuid())
+  classId      String
+  experimentId String
+  unlockedById String
+  unlockedAt   DateTime @default(now())
+
+  class      Class      @relation(fields: [classId],      references: [id], onDelete: Cascade)
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, experimentId])
+}
+
+model ExperimentSubmission {
+  id           String    @id @default(uuid())
+  experimentId String
+  studentId    String
+  classId      String
+  status       String    @default("pending")
+  notes        String    @default("")
+  reviewNotes  String    @default("")
+  submittedAt  DateTime  @default(now())
+  reviewedAt   DateTime?
+  reviewedById String?
+
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  student    User       @relation(fields: [studentId],    references: [id], onDelete: Cascade)
+  class      Class      @relation(fields: [classId],      references: [id], onDelete: Cascade)
+
+  @@unique([experimentId, studentId])
+}
+
+model Notice {
+  id          String    @id @default(uuid())
+  title       String
+  content     String
+  type        String    @default("info")   // info | warning | urgent
+  scope       String    @default("class")  // global | institute | class
+  authorId    String
+  instituteId String?
+  classId     String?
+  isActive    Boolean   @default(true)
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  author    User       @relation(fields: [authorId],    references: [id], onDelete: Cascade)
+  institute Institute? @relation(fields: [instituteId], references: [id])
+  class     Class?     @relation(fields: [classId],     references: [id])
+}
+
+model Otp {
+  id        Int      @id @default(autoincrement())
+  email     String
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
