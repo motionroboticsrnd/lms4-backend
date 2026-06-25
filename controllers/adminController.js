@@ -5,6 +5,7 @@ const iid = (req) => req.user.instituteId;
 
 const fmtUser = ({ password, ...u }) => ({ ...u, _id: u.id });
 
+
 const fmtClass = (c) => ({
   _id:           c.id,
   id:            c.id,
