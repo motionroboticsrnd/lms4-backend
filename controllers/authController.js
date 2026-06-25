@@ -20,10 +20,20 @@ const safeUser = (u) => ({
 
 export const login = async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password)
-    return res.status(400).json({ message: "Email and password required" });
+  const identifier = (email || "").trim();
+  if (!identifier || !password)
+    return res.status(400).json({ message: "Email/Roll number and password required" });
 
-  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+  // Accept email or roll number as login identifier
+  const user = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { email: identifier.toLowerCase() },
+        { rollNumber: identifier },
+      ],
+    },
+  });
+
   if (!user || !(await bcrypt.compare(password, user.password)))
     return res.status(401).json({ message: "Invalid credentials" });
 
