@@ -89,9 +89,20 @@ export const getUsers = async (req, res) => {
 };
 
 export const createUser = async (req, res) => {
-  const { fullName, email, password, role, instituteId, phone, rollNumber, avatarColor } = req.body;
-  if (!fullName || !email || !password || !role)
-    return res.status(400).json({ message: "fullName, email, password and role are required." });
+  const { fullName, password, role, instituteId, phone, rollNumber, avatarColor } = req.body;
+  let { email } = req.body;
+
+  if (!fullName || !password || !role)
+    return res.status(400).json({ message: "fullName, password and role are required." });
+
+  // Students without emails get an auto-generated placeholder
+  if (!email && role === "student") {
+    const tag = rollNumber?.trim() || Math.random().toString(36).slice(2, 8);
+    email = `student_${tag}_${Date.now()}@noemail.lms`;
+  }
+
+  if (!email)
+    return res.status(400).json({ message: "Email is required." });
 
   const exists = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
   if (exists) return res.status(409).json({ message: "Email is already registered." });

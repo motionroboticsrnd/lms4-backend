@@ -176,9 +176,14 @@ export const getStudents = async (req, res) => {
 };
 
 export const createStudent = async (req, res) => {
-  const { fullName, email, password, phone, rollNumber, avatarColor } = req.body;
-  if (!fullName || !email || !password)
-    return res.status(400).json({ message: "fullName, email and password required." });
+  const { fullName, password, phone, rollNumber, avatarColor } = req.body;
+  let { email } = req.body;
+  if (!fullName || !password)
+    return res.status(400).json({ message: "fullName and password required." });
+  if (!email) {
+    const tag = rollNumber?.trim() || Math.random().toString(36).slice(2, 8);
+    email = `student_${tag}_${Date.now()}@noemail.lms`;
+  }
   const exists = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
   if (exists) return res.status(409).json({ message: "Email already registered." });
   const hashed = await bcrypt.hash(password, 12);
