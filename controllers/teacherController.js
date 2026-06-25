@@ -99,18 +99,35 @@ export const getReports = async (req, res) => {
 };
 
 export const getContent = async (req, res) => {
-  const teacherId = req.user.id;
+  const teacherId      = req.user.id;
+  const instituteId    = req.user.instituteId || null;
 
   const classTeachers = await prisma.classTeacher.findMany({
     where: { userId: teacherId },
     include: { class: { select: { roboticsLevel: true } } },
   });
 
-  const levels = [...new Set(classTeachers.map((ct) => ct.class.roboticsLevel))];
+  let levels = [...new Set(classTeachers.map((ct) => ct.class.roboticsLevel))];
+
+  // Fallback: if teacher has no classes yet, use institute's allowedLevels
+  if (levels.length === 0 && instituteId) {
+    const institute = await prisma.institute.findUnique({
+      where: { id: instituteId },
+      select: { allowedLevels: true },
+    });
+    levels = institute?.allowedLevels || [];
+  }
+
   if (levels.length === 0) return res.json([]);
 
   const content = await prisma.content.findMany({
-    where: { roboticsLevel: { in: levels } },
+    where: {
+      roboticsLevel: { in: levels },
+      OR: [
+        { instituteId: null },
+        ...(instituteId ? [{ instituteId }] : []),
+      ],
+    },
     orderBy: [{ roboticsLevel: "asc" }, { type: "asc" }],
   });
 
